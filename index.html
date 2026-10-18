@@ -1,0 +1,1368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Podracing Dashboard</title>
+<meta name="description" content="Live Star Wars podracing telemetry: finishing places, lap-time records, course and racer breakdowns, built from a Google Sheet.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Podracing Dashboard · Podrace Telemetry">
+<meta property="og:description" content="Star Wars podracing stats: finishing places, course records, racer breakdowns and improvement over time.">
+<meta property="og:url" content="https://maximhoeft94.github.io/Star-Wars-Podracing-Dashboard/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Michroma&family=Saira+Semi+Condensed:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  /* Layout: Tatooine dusk. Twin-sun glow on the horizon, sand-colored readouts on
+     plum-brown instrument panels; the finishing place (1–8) is the unit everything hangs on. */
+  :root {
+    color-scheme: dark;
+    --bg: #382a3a;          /* dusk sky over the Dune Sea */
+    --bg-low: #2c202e;
+    --panel: #463545;
+    --panel-2: #514051;
+    --inset: #332634;
+    --line: rgba(236, 210, 170, 0.15);
+    --line-2: rgba(236, 210, 170, 0.30);
+    --sand: #f4e7cf;        /* primary text */
+    --dust: #bea998;        /* muted text */
+    --dust-2: #8f7d76;
+    --sun: #ff8a2a;         /* Tatoo I — accent */
+    --sun-2: #ffd27a;       /* Tatoo II — secondary */
+    --cool: #74b8cc;        /* reverse layouts */
+    --gold: #ffd27a;
+    --silver: #cdd5de;
+    --bronze: #d0915c;
+    --good: #9bd27a;
+    --bad: #e2655a;
+    --font-display: 'Michroma', 'Eurostile', 'Arial Black', sans-serif;
+    --font-body: 'Saira Semi Condensed', 'Arial Narrow', system-ui, sans-serif;
+    --font-mono: 'Share Tech Mono', ui-monospace, 'Courier New', monospace;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { background: var(--bg-low); }
+  body {
+    margin: 0; min-height: 100%;
+    font-family: var(--font-body); font-size: 16px; font-weight: 500; line-height: 1.45;
+    color: var(--sand);
+    background:
+      radial-gradient(ellipse 38% 26% at 22% -6%, rgba(255,138,42,0.28), transparent 70%),
+      radial-gradient(ellipse 22% 16% at 34% -4%, rgba(255,210,122,0.16), transparent 70%),
+      linear-gradient(180deg, #4a3343 0%, var(--bg) 380px, var(--bg-low) 100%);
+    background-attachment: fixed;
+    overflow-x: hidden;
+  }
+  ::selection { background: rgba(255,138,42,0.35); }
+  button { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--sun-2); outline-offset: 2px; }
+
+  .wrap { max-width: 1200px; margin: 0 auto;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+
+  /* ---------- Header ---------- */
+  header.top { border-bottom: 1px solid var(--line-2); background: linear-gradient(180deg, rgba(76,52,68,0.92), rgba(56,42,58,0.6)); }
+  header.top .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-block: 18px; }
+  .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+  .suns { position: relative; width: 38px; height: 38px; flex: 0 0 auto; }
+  .suns i { position: absolute; border-radius: 50%; }
+  .suns i:first-child { width: 24px; height: 24px; left: 0; top: 8px; background: var(--sun); box-shadow: 0 0 18px rgba(255,138,42,0.7); }
+  .suns i:last-child { width: 15px; height: 15px; right: 0; top: 4px; background: var(--sun-2); box-shadow: 0 0 14px rgba(255,210,122,0.6); }
+  h1 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 17px; letter-spacing: 3px; text-transform: uppercase; text-wrap: balance; }
+  h1 .sl { color: var(--sun); }
+  .tagline { display: block; font-size: 12px; letter-spacing: 3px; text-transform: uppercase; color: var(--dust); margin-top: 3px; }
+  .meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-family: var(--font-mono); font-size: 14px; color: var(--dust); }
+  .meta b { color: var(--sand); font-weight: 400; }
+  .src { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px solid var(--line-2); border-radius: 2px; }
+  .src::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--dust-2); }
+  .src.live::before { background: var(--good); box-shadow: 0 0 8px var(--good); }
+  .src.snap::before { background: var(--sun-2); }
+  .btn {
+    font-family: var(--font-display); font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+    padding: 9px 16px; cursor: pointer; color: var(--sun-2);
+    background: rgba(255,138,42,0.08); border: 1px solid rgba(255,138,42,0.45); border-radius: 2px;
+  }
+  .btn:hover { background: rgba(255,138,42,0.18); color: var(--sand); }
+  .btn[disabled] { opacity: 0.6; cursor: wait; }
+
+  /* ---------- Tabs ---------- */
+  .tabs { display: flex; gap: 4px; padding-top: 18px; }
+  .tab {
+    font-family: var(--font-display); font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+    padding: 12px 20px; cursor: pointer; color: var(--dust);
+    background: transparent; border: 1px solid transparent; border-bottom: none; border-radius: 3px 3px 0 0;
+  }
+  .tab:hover { color: var(--sand); }
+  .tab[aria-selected="true"] { color: var(--sun-2); background: var(--panel); border-color: var(--line-2); }
+  .tabline { border-top: 1px solid var(--line-2); }
+
+  main { padding-block: 20px 48px; }
+  .view[hidden] { display: none !important; }
+
+  /* ---------- Section heads ---------- */
+  .sec-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; margin: 26px 0 10px; }
+  .sec-head:first-child { margin-top: 4px; }
+  h2 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 13px; letter-spacing: 3px; text-transform: uppercase; color: var(--sun-2); text-wrap: balance; }
+  .sec-note { margin: 0; font-size: 14px; color: var(--dust); }
+  h3 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 11px; letter-spacing: 2.5px; text-transform: uppercase; color: var(--sun-2); }
+  .sub { margin: 4px 0 12px; font-size: 14px; color: var(--dust); max-width: 70ch; }
+  .label { font-size: 11px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; color: var(--dust); }
+
+  /* ---------- Panels ---------- */
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; padding: 18px 20px; margin-bottom: 16px; position: relative; }
+  .panel > .ph { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .toggle { all: unset; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+  .toggle::after { content: '▾'; color: var(--dust); transition: transform .15s ease; }
+  .panel.collapsed .toggle::after { transform: rotate(-90deg); }
+  .panel.collapsed .pb { display: none; }
+  .pb { margin-top: 10px; }
+
+  /* Tiles */
+  .tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 3px; padding: 12px 14px; min-width: 0; }
+  .tile .v { font-family: var(--font-display); font-size: 20px; line-height: 1.2; margin: 6px 0 2px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile .v.mono { font-family: var(--font-mono); font-size: 24px; }
+  .tile .s { font-size: 13px; color: var(--dust); }
+  .tile.hero { border-color: rgba(255,138,42,0.4); background: linear-gradient(160deg, rgba(255,138,42,0.14), transparent 60%), var(--panel); }
+  .tiles.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .tiles.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .d-up { color: var(--good); } .d-down { color: var(--bad); } .d-flat { color: var(--dust); }
+
+  /* Track records */
+  .records { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+  .rec { background: var(--inset); border: 1px solid var(--line); border-left: 3px solid var(--c, var(--sun)); border-radius: 2px; padding: 12px 14px; min-width: 0; }
+  .rec .course { font-weight: 700; font-size: 15px; letter-spacing: .3px; }
+  .rec .course .rv { font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--cool); margin-left: 6px; font-weight: 600; }
+  .rec .time { font-family: var(--font-mono); font-size: 28px; color: var(--sand); line-height: 1.15; margin: 4px 0 2px; }
+  .rec .avg { font-size: 13px; color: var(--dust); }
+  .rec .avg b { font-family: var(--font-mono); font-weight: 400; color: var(--sand); font-size: 15px; }
+  .rec .who { font-size: 12px; color: var(--dust-2); margin-top: 2px; }
+  .rec .runs { margin-top: 8px; display: flex; gap: 3px; flex-wrap: wrap; }
+
+  /* Place pills */
+  .pp { display: inline-block; min-width: 26px; text-align: center; padding: 0 5px; font-family: var(--font-mono); font-size: 13px; line-height: 20px; border-radius: 2px; border: 1px solid var(--line-2); color: var(--dust); }
+  .pp.p1 { background: var(--gold); color: #2a1a10; border-color: var(--gold); }
+  .pp.p2 { background: var(--silver); color: #1d1a22; border-color: var(--silver); }
+  .pp.p3 { background: var(--bronze); color: #24130a; border-color: var(--bronze); }
+  .pp.p7, .pp.p8 { color: var(--bad); border-color: rgba(226,101,90,0.5); }
+  .tag { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 1px 6px; border-radius: 2px; vertical-align: 1px; }
+  .tag.pb { background: rgba(155,210,122,0.16); color: var(--good); border: 1px solid rgba(155,210,122,0.45); }
+  .tag.first { background: rgba(116,184,204,0.12); color: var(--cool); border: 1px solid rgba(116,184,204,0.4); }
+  .tag.fix { background: rgba(255,210,122,0.12); color: var(--sun-2); border: 1px solid rgba(255,210,122,0.4); cursor: help; }
+
+
+  /* Filters */
+  .filters { background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 3px; padding: 16px 20px; margin-bottom: 16px; display: grid; gap: 14px; }
+  .frow { display: grid; grid-template-columns: 110px 1fr; gap: 12px; align-items: start; }
+  .frow .label { padding-top: 7px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+  .chip {
+    cursor: pointer; font-size: 14px; font-weight: 600; letter-spacing: .3px;
+    padding: 5px 11px; border-radius: 2px; color: var(--sand);
+    background: rgba(236,220,191,0.04); border: 1px solid var(--line-2);
+    white-space: nowrap;
+  }
+  .chip:hover { border-color: var(--sun); background: rgba(255,138,42,0.08); }
+  .chip[aria-pressed="true"] { background: var(--sun); border-color: var(--sun); color: #24130a; }
+  .chip[aria-pressed="true"] .n { color: #24130a; opacity: .7; }
+  .chip .n { font-family: var(--font-mono); font-size: 12px; color: var(--sun-2); margin-left: 5px; opacity: .85; }
+  .filters.compact { padding: 10px 14px; gap: 8px; margin-bottom: 14px; }
+  .filters.compact .frow { grid-template-columns: 64px 1fr; gap: 8px; }
+  .filters.compact .frow .label { padding-top: 4px; font-size: 10px; letter-spacing: 1.5px; }
+  .filters.compact .chips { gap: 4px; }
+  .filters.compact .chip { font-size: 12.5px; padding: 3px 9px; }
+  .filters.compact .chip .n { font-size: 11px; margin-left: 4px; }
+  .ctbl th.sortable { cursor: pointer; }
+  .ctbl td, .ctbl th { padding-left: 8px; padding-right: 8px; }
+  .ctbl .pp { margin-right: 2px; }
+  .ctbl th.sortable:hover { color: var(--sand); }
+  .share { display: inline-block; width: 44px; height: 6px; border-radius: 3px; background: var(--line); vertical-align: middle; margin-right: 8px; overflow: hidden; }
+  .share i { display: block; height: 100%; background: var(--sun); }
+  .tile .v.name { font-family: var(--font-body); font-weight: 700; font-size: 19px; letter-spacing: .2px; }
+  .tile.good { border-color: rgba(255,210,122,0.45); }
+  .tile.bad { border-color: rgba(226,101,90,0.45); }
+  .recs { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+  .recs li { position: relative; padding: 9px 12px 9px 28px; background: linear-gradient(90deg, rgba(255,138,42,0.1), transparent); border-left: 2px solid var(--sun); font-size: 15px; }
+  .recs li::before { content: '▸'; position: absolute; left: 11px; top: 9px; color: var(--sun); }
+  .recs strong { color: var(--sun-2); font-weight: 600; }
+  .racer-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; margin: 22px 0 12px; }
+  .racer-name { font-size: 22px; letter-spacing: 3px; color: var(--sand); margin: 4px 0 4px; }
+  .racer-last .runs { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 6px; }
+  #r-rank tr.selrow td { color: var(--sun-2); background: rgba(255,138,42,0.10); }
+  .tile .s { overflow-wrap: anywhere; }
+  .panel > .ph { flex-wrap: wrap; }
+  .chips.seg { gap: 0; flex-wrap: nowrap; }
+  .chips.seg .chip { font-size: 12.5px; padding: 4px 11px; border-radius: 0; margin-left: -1px; }
+  .chips.seg .chip:first-child { border-radius: 2px 0 0 2px; margin-left: 0; }
+  .chips.seg .chip:last-child { border-radius: 0 2px 2px 0; }
+  .imp-hl { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 12px 0 8px; }
+  .imp-hl .k { font-size: 11px; font-weight: 600; letter-spacing: 1.8px; text-transform: uppercase; color: var(--dust); }
+  .imp-hl .v { font-family: var(--font-display); font-size: 18px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .divider { border: 0; height: 1px; margin: 30px 0 4px; background: linear-gradient(90deg, transparent, var(--line-2) 12%, var(--line-2) 88%, transparent); }
+  .chip.rev[aria-pressed="true"] { background: var(--cool); border-color: var(--cool); }
+
+  /* Charts */
+  .chart { position: relative; width: 100%; background: var(--inset); border: 1px solid var(--line); border-radius: 2px; padding: 10px; }
+  .grid2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; }
+  .mini-h { margin: 18px 0 8px; font-size: 13px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--sun-2); }
+  .legend-note { font-size: 13px; color: var(--dust); margin: 0 0 8px; }
+
+  .empty { color: var(--dust); text-align: center; padding: 24px 12px; font-size: 15px; }
+
+  /* Racer cards */
+  .racers { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+  .rc { background: var(--inset); border: 1px solid var(--line); border-radius: 2px; padding: 12px 14px; }
+  .rc .nm { font-weight: 700; font-size: 16px; margin: 0 0 6px; }
+  .row { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; padding: 2px 0; }
+  .row .k { color: var(--dust); font-size: 12px; letter-spacing: 1.2px; text-transform: uppercase; padding-top: 2px; }
+  .row .val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+  /* Tables */
+  .tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 2px; background: var(--inset); -webkit-overflow-scrolling: touch; }
+  .tbl.scroll { max-height: 560px; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; font-variant-numeric: tabular-nums; }
+  th { position: sticky; top: 0; z-index: 1; text-align: left; padding: 8px 10px; background: var(--panel-2); color: var(--sun-2); font-size: 11px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: rgba(255,138,42,0.05); }
+  td.mono, th.mono { font-family: var(--font-mono); }
+  td.num, th.num { text-align: right; }
+  .rv-label { color: var(--cool); font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; margin-left: 6px; font-weight: 600; }
+
+  /* Matrix */
+  .matrix td, .matrix th { text-align: center; }
+  .matrix td:first-child, .matrix th:first-child { text-align: left; position: sticky; left: 0; background: var(--inset); z-index: 2; }
+  .matrix th:first-child { background: var(--panel-2); z-index: 3; }
+  .matrix tbody tr { cursor: pointer; }
+  .matrix td.cell { font-family: var(--font-mono); }
+  .matrix td.cell small { display: block; font-family: var(--font-body); font-size: 11px; color: var(--dust); }
+  .matrix td.thin { opacity: .6; }
+  .matrix tr.sel td { box-shadow: inset 0 1px 0 var(--sun), inset 0 -1px 0 var(--sun); }
+  .matrix th.colsel { color: var(--sand); background: rgba(255,138,42,0.25); }
+  .matrix tr.total td { border-top: 1px solid var(--line-2); color: var(--sun-2); cursor: default; }
+
+  .side td:first-child { color: var(--dust); font-size: 12px; letter-spacing: 1.2px; text-transform: uppercase; }
+  .side td.better { color: var(--good); background: rgba(155,210,122,0.08); }
+  .verdict { margin: 10px 0 0; font-size: 15px; }
+  .verdict strong { color: var(--sun-2); font-weight: 600; }
+
+  #error { display: none; margin-bottom: 16px; padding: 10px 14px; border: 1px solid var(--bad); background: rgba(226,101,90,0.12); color: #ffc9c2; border-radius: 2px; }
+  .note-bar { font-size: 13px; color: var(--dust); margin: -4px 0 16px; }
+  .note-bar .tag { margin-right: 6px; }
+
+  footer { padding-block: 10px 40px; text-align: center; font-size: 13px; color: var(--dust); }
+  footer a { color: var(--sun-2); text-decoration: none; }
+
+  @media (max-width: 960px) {
+    .tiles, .tiles.five { grid-template-columns: repeat(3, minmax(0,1fr)); }
+  }
+  @media (max-width: 720px) {
+    body { font-size: 15px; }
+    h1 { font-size: 13px; letter-spacing: 2px; }
+    .tagline { font-size: 10px; letter-spacing: 2px; }
+    .meta { width: 100%; justify-content: space-between; font-size: 13px; }
+    .tabs { display: grid; grid-template-columns: 1fr 1fr; }
+    .tab { font-size: 9px; letter-spacing: 1px; padding: 12px 6px; }
+    .tiles, .tiles.four, .tiles.five { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .tile .v { font-size: 17px; } .tile .v.mono { font-size: 20px; }
+    .grid2 { grid-template-columns: minmax(0,1fr); }
+    .panel, .filters { padding: 14px 12px; }
+    .frow { grid-template-columns: minmax(0,1fr); gap: 6px; }
+    .frow .label { padding-top: 0; }
+    .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px;
+      -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent); mask-image: linear-gradient(90deg, #000 88%, transparent); }
+    .chips::-webkit-scrollbar { display: none; }
+    .chips.seg { -webkit-mask-image: none; mask-image: none; margin-top: 6px; }
+    .chip { flex: 0 0 auto; }
+    .records { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .rec .time { font-size: 21px; }
+    .rec { padding: 10px; }
+    table { font-size: 14px; } td, th { padding: 6px 7px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <div class="suns" aria-hidden="true"><i></i><i></i></div>
+      <div>
+        <h1>Podrace <span class="sl">//</span> Telemetry</h1>
+        <span class="tagline">Outer Rim circuit · race archive</span>
+      </div>
+    </div>
+    <div class="meta">
+      <span><b id="race-count">—</b> races</span>
+      <span class="src" id="src">loading</span>
+      <button class="btn" id="sync-btn" type="button">↻ Sync</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-ov" data-tab="ov" aria-selected="true">Overview</button>
+    <button class="tab" role="tab" id="tab-az" data-tab="az" aria-selected="false">Racer Analysis</button>
+  </nav>
+</div>
+<div class="tabline"></div>
+
+<main class="wrap">
+  <div id="error"></div>
+
+  <!-- ===================== OVERVIEW ===================== -->
+  <section class="view" id="view-ov">
+    <div class="sec-head">
+      <h2>All-time metrics</h2>
+      <p class="sec-note" id="glance-note">Full archive. Not affected by filters.</p>
+    </div>
+    <div class="tiles four" id="glance"></div>
+
+    <div class="sec-head">
+      <h2>Track records</h2>
+      <p class="sec-note">Fastest time on every course, your average, and your last five finishes there.</p>
+    </div>
+    <div class="records" id="records"></div>
+
+    <hr class="divider">
+    <div class="sec-head">
+      <h2>Courses</h2>
+      <p class="sec-note">Every course you've raced, all-time. Best and worst need at least 3 runs.</p>
+    </div>
+    <div class="tiles four" id="course-hl"></div>
+    <div class="grid2" style="margin-top:12px">
+      <div class="panel">
+        <h3>Times raced</h3>
+        <p class="sub">Share of all your races. Lighter bars are reverse layouts.</p>
+        <div class="chart" id="wrap-c-plays"><canvas id="ch-c-plays"></canvas></div>
+      </div>
+      <div class="panel">
+        <h3>Average finish</h3>
+        <p class="sub">Longer bar is better. Dashed line is your overall average.</p>
+        <div class="chart" id="wrap-c-avg"><canvas id="ch-c-avg"></canvas></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Course breakdown</h3>
+      <p class="sub">Click a column header to sort. Progress compares your latest time on a course with your first.</p>
+      <div class="tbl"><table class="ctbl" id="course-tbl"></table></div>
+    </div>
+
+
+    <hr class="divider">
+    <div class="sec-head">
+      <h2>Race Stats</h2>
+      <p class="sec-note">These filters apply to this section only.</p>
+    </div>
+    <div class="filters compact">
+      <div class="frow"><span class="label">Course</span><div class="chips" id="f-course"></div></div>
+      <div class="frow"><span class="label">Racer</span><div class="chips" id="f-racer"></div></div>
+      <div class="frow"><span class="label">Finish</span><div class="chips" id="f-outcome"></div></div>
+    </div>
+
+    <div class="panel" id="form-panel">
+      <button class="toggle" type="button" data-collapse="form-panel"><h3 id="form-title">Recent form · last 25</h3></button>
+      <div class="pb">
+        <p class="sub" id="form-sub"></p>
+        <div class="tiles" id="form-tiles"></div>
+        <p class="mini-h">Finishing place, race by race</p>
+        <p class="legend-note">Bars reach up to your finish (1st at the top). Gold line is the 5-race rolling average.</p>
+        <div class="chart" style="height:260px"><canvas id="ch-form"></canvas></div>
+      </div>
+    </div>
+
+    <div class="panel" id="hist-panel">
+      <button class="toggle" type="button" data-collapse="hist-panel"><h3>Historicals</h3></button>
+      <div class="pb">
+        <p class="sub">Long-view trends across every race in the current filter.</p>
+        <p class="mini-h">Gap to course record</p>
+        <p class="legend-note">Seconds slower than the best time ever set on that course. Lower is better; 0 means you set the record. Hollow points are reverse layouts.</p>
+        <div class="chart" style="height:300px"><canvas id="ch-gap"></canvas></div>
+        <div class="grid2">
+          <div>
+            <p class="mini-h">How often you finish where</p>
+            <div class="chart" style="height:230px"><canvas id="ch-dist"></canvas></div>
+          </div>
+          <div>
+            <p class="mini-h">Session by session</p>
+            <div class="chart" style="height:230px"><canvas id="ch-session"></canvas></div>
+          </div>
+        </div>
+        <p class="mini-h">Racer comparison</p>
+        <div class="racers" id="racers"></div>
+      </div>
+    </div>
+
+    <hr class="divider">
+    <div class="sec-head">
+      <h2>Appendix</h2>
+    </div>
+    <div class="panel collapsed" id="log-panel">
+      <button class="toggle" type="button" data-collapse="log-panel"><h3>Race log</h3></button>
+      <div class="pb">
+        <p class="sub" id="log-sub"></p>
+        <div class="tbl scroll"><table id="log"></table></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== ANALYSIS ===================== -->
+  <section class="view" id="view-az" hidden>
+    <div class="filters compact">
+      <div class="frow"><span class="label">Racer</span><div class="chips" id="r-racer"></div></div>
+      <div class="frow"><span class="label">Layout</span><div class="chips" id="r-dir"></div></div>
+    </div>
+
+    <div class="racer-head">
+      <div>
+        <div class="label">Pod racer</div>
+        <h2 class="racer-name" id="r-name">—</h2>
+        <p class="sec-note" id="r-sub"></p>
+      </div>
+      <div class="racer-last" id="r-last"></div>
+    </div>
+    <div class="tiles four" id="r-tiles"></div>
+
+    <div class="sec-head">
+      <h2 id="r-best-title">Best runs</h2>
+      <p class="sec-note">Fastest time on each course with this racer, then their average there.</p>
+    </div>
+    <div class="records" id="r-best"></div>
+
+    <div class="panel" id="imp-panel" style="margin-top:16px">
+      <div class="ph"><h3 id="imp-title">Improvement over time</h3><div class="chips seg" id="imp-mode"></div></div>
+      <div class="imp-hl" id="imp-hl"></div>
+      <p class="legend-note" id="imp-note"></p>
+      <div class="chart" style="height:320px"><canvas id="ch-imp"></canvas></div>
+    </div>
+
+    <div class="panel">
+      <h3>Scouting report</h3>
+      <p class="sub">Generated from this racer's results. Course rankings need at least 2 runs.</p>
+      <ul class="recs" id="r-insights"></ul>
+    </div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h3>How often they finish where</h3>
+        <div class="chart" style="height:240px"><canvas id="ch-r-dist"></canvas></div>
+      </div>
+      <div class="panel">
+        <h3>Finish over time</h3>
+        <p class="legend-note">Dots are colored by track; hollow ones are reverse layouts. Gold line is the 3-race rolling average.</p>
+        <div class="chart" style="height:214px"><canvas id="ch-r-trend"></canvas></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3 id="r-course-title">By course</h3>
+      <p class="sub">How this racer does on every course. Off record is their best time against the course record.</p>
+      <div class="tbl"><table class="ctbl" id="r-courses"></table></div>
+    </div>
+
+    <div class="grid2">
+      <div class="panel">
+        <h3>Forward vs Reverse</h3>
+        <p class="sub" id="r-fr-sub"></p>
+        <div class="tbl"><table class="side" id="r-fr"></table></div>
+        <p class="verdict" id="r-fr-verdict"></p>
+      </div>
+      <div class="panel">
+        <h3>Racer standings</h3>
+        <p class="sub">Every pod ranked by average finish. Click a row to switch racers.</p>
+        <div class="tbl"><table id="r-rank"></table></div>
+      </div>
+    </div>
+
+    <div class="panel collapsed" id="r-log-panel">
+      <button class="toggle" type="button" data-collapse="r-log-panel"><h3>Race log</h3></button>
+      <div class="pb">
+        <p class="sub" id="r-log-sub"></p>
+        <div class="tbl scroll" style="max-height:440px"><table id="r-log"></table></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap">
+  Built by Maxim Hoeft · Data syncs live from Google Sheets ·
+  <a href="https://github.com/maximhoeft94/Star-Wars-Podracing-Dashboard">View source on GitHub</a>
+</footer>
+
+<script>
+// ============================================================================
+// DATA SOURCE
+// The page tries the Google Sheet first (works once the sheet is shared as
+// "Anyone with the link · Viewer"). If that fails, it uses the snapshot below.
+// ============================================================================
+const SHEET_ID = '1hE0RAJR80U-S995loSQMInzCMw6RDN1IeOONFfcTC_I';
+const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=0`;
+
+// Snapshot taken Oct 18, 2026: [race, date, course, racer, place, time]
+const SNAPSHOT = [
+  [1,'10/15',"Mawhonic Speedway","Ben Quadinaros",3,"2:42.86"],
+  [2,'10/15',"Holdfast's Folly","Ben Quadinaros",2,"2:48.16"],
+  [3,'10/15',"Quadrinaros' Revenge","Ben Quadinaros",4,"2:44.24"],
+  [4,'10/15',"Mawhonic Speedway","Ben Quadinaros",4,"2:41.05"],
+  [5,'10/15',"Mawhonic Speedway (Reverse)","Sebulba",4,"2:34.50"],
+  [6,'10/15',"Holdfast's Folly (Reverse)","Sebulba",5,"2:49.55"],
+  [7,'10/15',"Quadrinaros' Revenge","Sebulba",5,"2:39.19"],
+  [8,'10/15',"Mawhonic Speedway","Sebulba",3,"2:27.32"],
+  [9,'10/15',"Holdfast's Folly","Sebulba",6,"2:46.31"],
+  [10,'10/15',"Mos Espa Speedway","Sebulba",2,"2:33.68"],
+  [11,'10/15',"Mawhonic Speedway (Reverse)","Sebulba",5,"2:44.93"],
+  [12,'10/15',"Holdfast's Folly (Reverse)","Teemto Pagalies",8,"2:54.80"],
+  [13,'10/15',"Quadrinaros' Revenge","Gasgano",8,"2:43.46"],
+  [14,'10/15',"Quadrinaros' Revenge","Ben Quadinaros",2,"233.04"],
+  [15,'10/15',"Mos Espa Speedway","Ben Quadinaros",2,"2:38.12"],
+  [16,'10/15',"Holdfast's Folly","Ben Quadinaros",2,"2:35.06"],
+  [17,'10/17',"Mawhonic Speedway","Ody Mandrell",6,"2:43.92"],
+  [18,'10/17',"Quadrinaros' Revenge","Ody Mandrell",2,"2:36.28"],
+  [19,'10/17',"Holdfast's Folly","Ody Mandrell",4,"2:44.86"],
+  [20,'10/17',"Mawhonic Speedway (Reverse)","Ody Mandrell",5,"2:40.98"],
+  [21,'10/17',"Mos Espa Speedway","Ody Mandrell",2,"2:39.27"],
+  [22,'10/17',"Holdfast's Folly (Reverse)","Ody Mandrell",7,"2:58.40"],
+  [23,'10/17',"Holdfast's Folly","Ben Quadinaros",4,"2:43.05"],
+  [24,'10/17',"Mos Espa Speedway","Teemto Pagalies",3,"2:35.74"],
+  [25,'10/17',"Mawhonic Speedway","Teemto Pagalies",4,"2:30.58"],
+  [26,'10/17',"Quadrinaros' Revenge","Teemto Pagalies",2,"2:36.60"],
+  [27,'10/17',"Holdfast's Folly (Reverse)","Dud Bolt",6,"2:54.57"],
+  [28,'10/17',"Mawhonic Speedway (Reverse)","Ben Quadinaros",3,"2:33.59"],
+  [29,'10/17',"Holdfast's Folly (Reverse)","Ben Quadinaros",2,"2:31.43"],
+  [30,'10/17',"Mos Espa Speedway","Ben Quadinaros",1,"2:31.16"],
+  [31,'10/17',"Mawhonic Speedway","Ben Quadinaros",4,"2:30.14"],
+  [32,'10/17',"Quadrinaros' Revenge","Ben Quadinaros",1,"2:33.25"],
+  [33,'10/17',"Holdfast's Folly (Reverse)","Ben Quadinaros",1,"2:41.90"],
+  [34,'10/17',"Mawhonic Speedway (Reverse)","Ben Quadinaros",1,"2:37.87"],
+  [35,'10/17',"Holdfast's Folly","Ben Quadinaros",2,"2:32.24"],
+];
+
+const FIELD = 8; // racers per race
+
+// ---------- parsing ----------
+function parseCSV(text) {
+  const rows = []; let row = [], f = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i+1] === '"') { f += '"'; i++; } else q = false; } else f += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { row.push(f); f = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && text[i+1] === '\n') i++; row.push(f); rows.push(row); row = []; f = ''; }
+    else f += c;
+  }
+  if (f !== '' || row.length) { row.push(f); rows.push(row); }
+  return rows.filter(r => r.some(v => v.trim() !== ''));
+}
+
+// "2:42.86" → 162.86 s. A time typed without the colon ("233.04") is read as 2:33.04 and flagged.
+function parseTime(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return { t: null, fixed: false };
+  if (s.includes(':')) {
+    const [m, sec] = s.split(':');
+    const t = parseInt(m, 10) * 60 + parseFloat(sec);
+    return { t: isNaN(t) ? null : t, fixed: false };
+  }
+  const v = parseFloat(s);
+  if (isNaN(v)) return { t: null, fixed: false };
+  if (v >= 100) return { t: Math.floor(v / 100) * 60 + (v % 100), fixed: true };
+  return { t: v, fixed: false };
+}
+function fmtTime(sec) {
+  if (sec == null || isNaN(sec)) return '—';
+  const m = Math.floor(sec / 60), s = sec - m * 60;
+  return `${m}:${s.toFixed(2).padStart(5, '0')}`;
+}
+const ord = n => { const v = Math.round(n); const s = ['th','st','nd','rd']; const r = v % 100; return v + (s[(r - 20) % 10] || s[r] || s[0]); };
+const pill = p => `<span class="pp p${p}">${p}</span>`;
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const mean = (a, f) => a.length ? a.reduce((s, x) => s + f(x), 0) / a.length : NaN;
+const sd = (a, f) => { if (a.length < 2) return 0; const m = mean(a, f); return Math.sqrt(mean(a, x => (f(x) - m) ** 2)); };
+
+function rowsFromCSV(text) {
+  const rows = parseCSV(text);
+  const head = rows.shift().map(h => h.trim().toLowerCase());
+  const col = re => head.findIndex(h => re.test(h));
+  const ix = { date: col(/date/), race: col(/race/), course: col(/course|track/), racer: col(/character|racer|pilot/), place: col(/place|pos/), time: col(/time/) };
+  if (ix.course < 0 || ix.place < 0) throw new Error('Could not find Course and Place columns in the sheet');
+  return rows.map((r, i) => [
+    ix.race >= 0 ? parseInt(r[ix.race], 10) : i + 1,
+    ix.date >= 0 ? (r[ix.date] || '').trim() : '',
+    (r[ix.course] || '').trim(),
+    ix.racer >= 0 ? (r[ix.racer] || '').trim() : 'Unknown',
+    parseInt(r[ix.place], 10),
+    ix.time >= 0 ? r[ix.time] : '',
+  ]).filter(r => r[2] && !isNaN(r[4]));
+}
+
+// Turn raw rows into race objects with records, PB flags and gaps.
+function buildRaces(rows) {
+  const races = rows.map(([race, date, course, racer, place, timeRaw]) => {
+    const { t, fixed } = parseTime(timeRaw);
+    const reverse = /\(\s*reverse\s*\)/i.test(course);
+    const base = course.replace(/\s*\(\s*reverse\s*\)\s*/i, '').trim();
+    return { race, date, course, base, reverse, racer, place, time: t, timeRaw: String(timeRaw).trim(), fixed };
+  }).sort((a, b) => a.race - b.race);
+
+  const best = {};      // running best per course
+  races.forEach(r => {
+    if (r.time == null) return;
+    const prev = best[r.course];
+    r.firstRun = prev == null;
+    r.isPB = prev != null && r.time < prev;
+    if (prev == null || r.time < prev) best[r.course] = r.time;
+  });
+  const record = {};
+  races.forEach(r => { if (r.time != null && (!record[r.course] || r.time < record[r.course].time)) record[r.course] = r; });
+  races.forEach(r => { r.gap = (r.time != null && record[r.course]) ? r.time - record[r.course].time : null; });
+  return { races, record };
+}
+
+// ---------- colors ----------
+const CS = getComputedStyle(document.documentElement);
+const tok = n => CS.getPropertyValue(n).trim();
+const C = {
+  sand: tok('--sand'), dust: tok('--dust'), bg: tok('--bg'), line: 'rgba(236,210,170,0.13)',
+  sun: tok('--sun'), sun2: tok('--sun-2'), cool: tok('--cool'),
+  gold: tok('--gold'), silver: tok('--silver'), bronze: tok('--bronze'), good: tok('--good'), bad: tok('--bad'),
+};
+const TRACK_COLORS = { 'Mawhonic Speedway': '#ff8a2a', "Holdfast's Folly": '#74b8cc', "Quadrinaros' Revenge": '#d68fd2', 'Mos Espa Speedway': '#ffd27a' };
+const EXTRA = ['#9bd27a', '#f0a37e', '#a7b4ff', '#e6c26a', '#7fd1b9', '#d98a8a'];
+function trackColor(base) {
+  if (TRACK_COLORS[base]) return TRACK_COLORS[base];
+  let h = 0; for (const ch of base) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return TRACK_COLORS[base] = EXTRA[h % EXTRA.length];
+}
+function placeColor(p) {
+  return p === 1 ? C.gold : p === 2 ? C.silver : p === 3 ? C.bronze : p <= 5 ? '#a08497' : C.bad;
+}
+
+Chart.defaults.color = C.dust;
+Chart.defaults.borderColor = C.line;
+Chart.defaults.font.family = "'Saira Semi Condensed', 'Arial Narrow', sans-serif";
+Chart.defaults.font.size = 13;
+Chart.defaults.font.weight = 500;
+Chart.defaults.plugins.tooltip.backgroundColor = 'rgba(40,29,42,0.97)';
+Chart.defaults.plugins.tooltip.borderColor = 'rgba(236,210,170,0.26)';
+Chart.defaults.plugins.tooltip.borderWidth = 1;
+Chart.defaults.plugins.tooltip.titleColor = C.sun2;
+Chart.defaults.plugins.tooltip.bodyColor = C.sand;
+Chart.defaults.plugins.legend.labels.boxWidth = 12;
+const IS_MOBILE = () => window.matchMedia('(max-width: 720px)').matches;
+if (IS_MOBILE()) { Chart.defaults.font.size = 11; Chart.defaults.scale.ticks.maxRotation = 0; }
+
+// ---------- state ----------
+let RACES = [], RECORD = {}, COURSES = [], RACERS = [];
+const ov = { course: null, racers: new Set(), outcome: 'all' };
+const charts = {};
+function mkChart(id, cfg) { if (charts[id]) charts[id].destroy(); charts[id] = new Chart(document.getElementById(id), cfg); }
+
+const OUTCOMES = [
+  ['all', 'All finishes', () => true],
+  ['win', 'Wins', r => r.place === 1],
+  ['podium', 'Podium (1st–3rd)', r => r.place <= 3],
+  ['off', 'Off podium', r => r.place > 3],
+];
+
+// ---------- loading ----------
+async function fetchLive() {
+  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 7000);
+  try {
+    const resp = await fetch(SHEET_CSV_URL, { cache: 'no-store', signal: ctl.signal });
+    if (!resp.ok) throw new Error(`Google Sheets returned ${resp.status}`);
+    const text = await resp.text();
+    if (/^\s*</.test(text)) throw new Error('Sheet is not shared publicly');
+    const rows = rowsFromCSV(text);
+    if (!rows.length) throw new Error('Sheet returned no races');
+    return rows;
+  } finally { clearTimeout(timer); }
+}
+
+async function load(isSync) {
+  const btn = document.getElementById('sync-btn');
+  const src = document.getElementById('src');
+  btn.disabled = true; btn.textContent = '⟳ Syncing';
+  let rows, live = false;
+  try { rows = await fetchLive(); live = true; }
+  catch (e) { rows = SNAPSHOT; }
+  const built = buildRaces(rows);
+  RACES = built.races; RECORD = built.record;
+  const cCount = {}, rCount = {};
+  RACES.forEach(r => { cCount[r.course] = (cCount[r.course] || 0) + 1; rCount[r.racer] = (rCount[r.racer] || 0) + 1; });
+  COURSES = Object.keys(cCount).sort((a, b) => cCount[b] - cCount[a] || a.localeCompare(b));
+  RACERS = Object.keys(rCount).sort((a, b) => rCount[b] - rCount[a] || a.localeCompare(b));
+  if (ov.course && !cCount[ov.course]) ov.course = null;
+  [...ov.racers].forEach(r => { if (!rCount[r]) ov.racers.delete(r); });
+
+  document.getElementById('race-count').textContent = RACES.length;
+  src.className = 'src ' + (live ? 'live' : 'snap');
+  src.textContent = live ? 'live · ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'snapshot · Oct 18';
+  src.title = live ? 'Read straight from the Google Sheet' : 'Could not reach the Google Sheet, showing the saved snapshot. Share the sheet as "Anyone with the link · Viewer" to sync live.';
+  btn.disabled = false; btn.textContent = '↻ Sync';
+  renderAll();
+}
+
+function renderAll() { renderOverview(); renderAnalysis(); }
+
+// ============================================================================
+// SHARED STATS
+// ============================================================================
+function stats(rs) {
+  const n = rs.length;
+  if (!n) return { n: 0 };
+  const timed = rs.filter(r => r.gap != null);
+  const places = rs.map(r => r.place).sort((a, b) => a - b);
+  return {
+    n,
+    wins: rs.filter(r => r.place === 1).length,
+    pod: rs.filter(r => r.place <= 3).length,
+    avg: mean(rs, r => r.place),
+    med: places[Math.floor(n / 2)],
+    gap: timed.length ? mean(timed, r => r.gap) : NaN,
+    best: Math.min(...rs.map(r => r.place)),
+    pbs: rs.filter(r => r.isPB).length,
+    eligible: rs.filter(r => r.time != null && !r.firstRun).length,
+  };
+}
+const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
+function delta(v, base, digits, lowerBetter, unit = '') {
+  if (isNaN(v) || isNaN(base)) return '';
+  const d = v - base, eps = digits === 0 ? 0.5 : Math.pow(10, -digits) / 2;
+  const cls = Math.abs(d) < eps ? 'd-flat' : ((d < 0) === lowerBetter ? 'd-up' : 'd-down');
+  const arrow = Math.abs(d) < eps ? '◆' : d > 0 ? '▲' : '▼';
+  return `<span class="${cls}">${arrow} ${d >= 0 ? '+' : ''}${d.toFixed(digits)}${unit}</span> vs avg`;
+}
+const tile = (label, v, s, cls = '', vcls = '') => `<div class="tile ${cls}"><div class="label">${label}</div><div class="v ${vcls}">${v}</div><div class="s">${s || '&nbsp;'}</div></div>`;
+const nameCourse = c => { const rev = /\(\s*reverse\s*\)/i.test(c); const b = c.replace(/\s*\(\s*reverse\s*\)\s*/i, ''); return esc(b) + (rev ? '<span class="rv-label">Rev</span>' : ''); };
+const shortCourse = c => c.replace(/\s*\(\s*reverse\s*\)\s*/i, ' ⟲');
+
+// ============================================================================
+// OVERVIEW
+// ============================================================================
+function filteredOv() {
+  const oc = OUTCOMES.find(o => o[0] === ov.outcome)[2];
+  return RACES.filter(r => (!ov.course || r.course === ov.course) && (!ov.racers.size || ov.racers.has(r.racer)) && oc(r));
+}
+const anyOvFilter = () => !!ov.course || ov.racers.size > 0 || ov.outcome !== 'all';
+function describeOv() {
+  const p = [ov.course ? shortCourse(ov.course) : 'All courses'];
+  if (ov.racers.size) p.push(ov.racers.size === 1 ? [...ov.racers][0] : `${ov.racers.size} racers`);
+  if (ov.outcome !== 'all') p.push(OUTCOMES.find(o => o[0] === ov.outcome)[1]);
+  return p.join(' · ');
+}
+
+function renderOverview() {
+  renderGlance();
+  renderRecords();
+  renderCourses();
+  renderOvFilters();
+  const rs = filteredOv();
+  renderForm(rs);
+  renderHistoricals(rs);
+  renderLog(rs);
+}
+
+function renderGlance() {
+  const s = stats(RACES);
+  const sessions = new Set(RACES.map(r => r.date)).size;
+  const byR = groupStats(RACES, r => r.racer);
+  const ranked = byR.filter(x => x.n >= 3).sort((a, b) => a.avg - b.avg || b.wins - a.wins);
+  const top = (ranked.length ? ranked : byR.sort((a, b) => a.avg - b.avg))[0];
+  document.getElementById('glance').innerHTML = [
+    tile('Win rate', pct(s.wins, s.n) + '%', `${s.wins} win${s.wins === 1 ? '' : 's'} in ${s.n} races`, s.wins ? 'hero' : ''),
+    tile('Podium rate', pct(s.pod, s.n) + '%', `${s.pod} top-three finishes`),
+    tile('Total races', s.n, `${sessions} session${sessions === 1 ? '' : 's'} · ${COURSES.length} courses`),
+    tile('Average finish', s.avg.toFixed(2), `median ${ord(s.med)} of ${FIELD}`),
+  ].join('');
+}
+
+function renderRecords() {
+  const order = [...COURSES].sort((a, b) => {
+    const A = RECORD[a], B = RECORD[b];
+    return (A ? A.base : a).localeCompare(B ? B.base : b) || (A && A.reverse) - (B && B.reverse);
+  });
+  document.getElementById('records').innerHTML = order.map(c => {
+    const rec = RECORD[c]; const runs = RACES.filter(r => r.course === c);
+    const base = runs[0].base, rev = runs[0].reverse;
+    const timed = runs.filter(r => r.time != null);
+    const last5 = runs.slice(-5).map(r => pill(r.place)).join('');
+    return `<div class="rec" style="--c:${trackColor(base)}">
+      <div class="course">${esc(base)}${rev ? '<span class="rv">Reverse</span>' : ''}</div>
+      <div class="time">${rec ? fmtTime(rec.time) : '—'}${rec && rec.fixed ? ` <span class="tag fix" title="Entered as ${esc(rec.timeRaw)} in the sheet, read as ${fmtTime(rec.time)}">check</span>` : ''}</div>
+      <div class="avg">Your average <b>${timed.length ? fmtTime(mean(timed, r => r.time)) : '—'}</b> · ${runs.length} run${runs.length === 1 ? '' : 's'}</div>
+      <div class="who">${rec ? `Set by ${esc(rec.racer)} · race ${rec.race} · ${ord(rec.place)}` : 'No timed runs'}</div>
+      <div class="runs">${last5}</div>
+    </div>`;
+  }).join('');
+}
+
+// ---------- courses ----------
+const courseSort = { key: 'n', dir: -1 };
+function courseRows() {
+  return COURSES.map(c => {
+    const runs = RACES.filter(r => r.course === c), s = stats(runs);
+    const timed = runs.filter(r => r.time != null);
+    return {
+      c, runs, ...s, base: runs[0].base, reverse: runs[0].reverse,
+      share: s.n / RACES.length,
+      avgTime: timed.length ? mean(timed, r => r.time) : NaN,
+      rec: RECORD[c],
+      progress: timed.length >= 2 ? timed[timed.length - 1].time - timed[0].time : NaN,
+    };
+  });
+}
+function renderCourses() {
+  const rows = courseRows(), all = stats(RACES);
+  const qual = rows.filter(r => r.n >= 3);
+  const most = [...rows].sort((a, b) => b.n - a.n || a.avg - b.avg)[0];
+  const best = [...qual].sort((a, b) => a.avg - b.avg || b.wins - a.wins)[0];
+  const worst = [...qual].sort((a, b) => b.avg - a.avg || a.pod - b.pod)[0];
+  const improved = rows.filter(r => !isNaN(r.progress)).sort((a, b) => a.progress - b.progress)[0];
+  const nm = r => esc(r.base) + (r.reverse ? ' <span class="rv-label">Rev</span>' : '');
+  document.getElementById('course-hl').innerHTML = [
+    tile('Most raced', nm(most), `${most.n} races · ${Math.round(most.share * 100)}% of all races`, 'hero', 'name'),
+    best ? tile('Best course', nm(best), `${best.avg.toFixed(2)} avg finish · ${best.pod} podiums in ${best.n}`, 'good', 'name') : tile('Best course', '—', 'need 3 runs on a course'),
+    worst && worst !== best ? tile('Toughest course', nm(worst), `${worst.avg.toFixed(2)} avg finish · ${worst.pod} podiums in ${worst.n}`, 'bad', 'name') : tile('Toughest course', '—', 'need 3 runs on two courses'),
+    improved && improved.progress < 0 ? tile('Most improved', nm(improved), `${Math.abs(improved.progress).toFixed(2)}s faster than your first run`, '', 'name') : tile('Most improved', '—', 'no course has gotten faster yet'),
+  ].join('');
+
+  // Charts
+  const byPlays = [...rows].sort((a, b) => b.n - a.n);
+  const h = Math.max(220, rows.length * 38 + 50);
+  document.getElementById('wrap-c-plays').style.height = h + 'px';
+  document.getElementById('wrap-c-avg').style.height = h + 'px';
+  const fill = r => trackColor(r.base) + (r.reverse ? '80' : '');
+  mkChart('ch-c-plays', {
+    type: 'bar',
+    data: { labels: byPlays.map(r => shortCourse(r.c)), datasets: [{ data: byPlays.map(r => r.n), backgroundColor: byPlays.map(fill), borderColor: byPlays.map(r => trackColor(r.base)), borderWidth: 1, borderRadius: 2 }] },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => { const r = byPlays[c.dataIndex]; return `${r.n} races · ${Math.round(r.share * 100)}% of all`; } } } },
+      scales: { x: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'Races' } }, y: { grid: { display: false }, ticks: { autoSkip: false } } } },
+  });
+  const byAvg = [...rows].sort((a, b) => a.avg - b.avg);
+  mkChart('ch-c-avg', {
+    type: 'bar',
+    data: { labels: byAvg.map(r => shortCourse(r.c)), datasets: [
+      { label: 'Avg finish', data: byAvg.map(r => [FIELD + 0.5, r.avg]), backgroundColor: byAvg.map(r => placeColor(Math.round(r.avg))), borderRadius: 2 },
+      { type: 'line', label: 'Overall', data: byAvg.map(() => all.avg), borderColor: C.sand, borderDash: [5, 4], borderWidth: 1, pointRadius: 0, indexAxis: 'y' },
+    ] },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { filter: c => c.datasetIndex === 0, callbacks: { label: c => { const r = byAvg[c.dataIndex]; return [`${r.avg.toFixed(2)} avg finish over ${r.n} race${r.n === 1 ? '' : 's'}`, `${r.wins} wins · ${r.pod} podiums`]; } } } },
+      scales: { x: { reverse: true, min: 1, max: FIELD + 0.5, afterBuildTicks: ax => { ax.ticks = Array.from({ length: FIELD }, (_, i) => ({ value: i + 1 })); }, title: { display: true, text: 'Avg finish' } }, y: { grid: { display: false }, ticks: { autoSkip: false } } } },
+  });
+
+  // Table
+  const val = r => ({ c: r.c.toLowerCase(), n: r.n, avg: r.avg, best: r.best, wins: r.wins, pod: r.pod / r.n, time: r.avgTime, rec: r.rec ? r.rec.time : Infinity, prog: isNaN(r.progress) ? Infinity : r.progress })[courseSort.key];
+  const sorted = [...rows].sort((a, b) => { const x = val(a), y = val(b); return (x < y ? -1 : x > y ? 1 : 0) * courseSort.dir || b.n - a.n; });
+  const arrow = k => courseSort.key === k ? (courseSort.dir < 0 ? ' ▼' : ' ▲') : '';
+  const th = (k, l, cls = '') => `<th class="sortable ${cls}" data-k="${k}">${l}${arrow(k)}</th>`;
+  const maxShare = Math.max(...rows.map(r => r.share));
+  document.getElementById('course-tbl').innerHTML = `<thead><tr>${th('c', 'Course')}${th('n', 'Races', 'num')}<th>Share</th>${th('avg', 'Avg finish', 'num')}${th('best', 'Best', 'num')}${th('wins', 'Wins', 'num')}${th('pod', 'Podium %', 'num')}${th('time', 'Avg time', 'num')}${th('rec', 'Record', 'num')}${th('prog', 'Progress', 'num')}<th>Last 5</th></tr></thead>
+    <tbody>${sorted.map(r => `<tr>
+      <td>${nameCourse(r.c)}</td>
+      <td class="mono num">${r.n}</td>
+      <td><span class="share"><i style="width:${(r.share / maxShare * 100).toFixed(0)}%"></i></span><span class="mono">${Math.round(r.share * 100)}%</span></td>
+      <td class="mono num" style="background:${cellBg(r.avg, r.n)}">${r.avg.toFixed(2)}</td>
+      <td class="mono num">${ord(r.best)}</td>
+      <td class="mono num">${r.wins}</td>
+      <td class="mono num">${pct(r.pod, r.n)}%</td>
+      <td class="mono num">${fmtTime(r.avgTime)}</td>
+      <td class="mono num">${r.rec ? fmtTime(r.rec.time) : '—'}</td>
+      <td class="mono num ${isNaN(r.progress) ? '' : r.progress < 0 ? 'd-up' : 'd-down'}">${isNaN(r.progress) ? '—' : (r.progress < 0 ? '−' : '+') + Math.abs(r.progress).toFixed(2) + 's'}</td>
+      <td>${r.runs.slice(-5).map(x => pill(x.place)).join('')}</td>
+    </tr>`).join('')}</tbody>`;
+  document.querySelectorAll('#course-tbl th.sortable').forEach(el => el.onclick = () => {
+    const k = el.dataset.k;
+    if (courseSort.key === k) courseSort.dir *= -1;
+    else { courseSort.key = k; courseSort.dir = (k === 'n' || k === 'wins' || k === 'pod') ? -1 : 1; }
+    renderCourses();
+  });
+}
+
+function chipBtn(attrs, label, n, pressed, cls = '') {
+  return `<button type="button" class="chip ${cls}" ${attrs} aria-pressed="${pressed}">${label}${n != null ? `<span class="n">×${n}</span>` : ''}</button>`;
+}
+function renderOvFilters() {
+  const cC = {}, rC = {};
+  RACES.forEach(r => { cC[r.course] = (cC[r.course] || 0) + 1; rC[r.racer] = (rC[r.racer] || 0) + 1; });
+  const fc = document.getElementById('f-course');
+  fc.innerHTML = chipBtn('data-v=""', 'All courses', RACES.length, !ov.course) +
+    COURSES.map(c => chipBtn(`data-v="${esc(c)}"`, esc(shortCourse(c)), cC[c], ov.course === c, /reverse/i.test(c) ? 'rev' : '')).join('');
+  fc.querySelectorAll('.chip').forEach(b => b.onclick = () => { const v = b.dataset.v || null; ov.course = (v && ov.course === v) ? null : v; renderOverview(); });
+
+  const fr = document.getElementById('f-racer');
+  fr.innerHTML = chipBtn('data-v=""', 'All racers', RACES.length, !ov.racers.size) +
+    RACERS.map(r => chipBtn(`data-v="${esc(r)}"`, esc(r), rC[r], ov.racers.has(r))).join('');
+  fr.querySelectorAll('.chip').forEach(b => b.onclick = () => { const v = b.dataset.v; if (!v) ov.racers.clear(); else if (ov.racers.has(v)) ov.racers.delete(v); else ov.racers.add(v); renderOverview(); });
+
+  const fo = document.getElementById('f-outcome');
+  fo.innerHTML = OUTCOMES.map(([k, l]) => chipBtn(`data-v="${k}"`, l, null, ov.outcome === k)).join('');
+  fo.querySelectorAll('.chip').forEach(b => b.onclick = () => { ov.outcome = b.dataset.v; renderOverview(); });
+}
+
+function renderForm(rs) {
+  const N = 25;
+  const tiles = document.getElementById('form-tiles');
+  if (!rs.length) {
+    tiles.innerHTML = '<div class="empty" style="grid-column:1/-1">No races match this filter.</div>';
+    document.getElementById('form-sub').textContent = '';
+    if (charts['ch-form']) { charts['ch-form'].destroy(); delete charts['ch-form']; }
+    return;
+  }
+  const recent = rs.slice(-N), r = stats(recent), b = stats(rs);
+  document.getElementById('form-title').textContent = `Recent form · last ${recent.length}`;
+  document.getElementById('form-sub').textContent = (anyOvFilter() ? `${describeOv()}. ` : '') +
+    (recent.length < N ? `Only ${recent.length} race${recent.length === 1 ? '' : 's'} in this filter.` : `Last ${N} of ${rs.length} races.`) + ' Deltas compare against the whole filter.';
+  tiles.innerHTML = [
+    tile('Avg finish', r.avg.toFixed(2), delta(r.avg, b.avg, 2, true)),
+    tile('Wins', `${r.wins}`, `${pct(r.wins, r.n)}% · ` + delta(pct(r.wins, r.n), pct(b.wins, b.n), 0, false, 'pp')),
+    tile('Podium rate', `${pct(r.pod, r.n)}%`, delta(pct(r.pod, r.n), pct(b.pod, b.n), 0, false, 'pp')),
+    tile('Best finish', ord(r.best), `of ${FIELD} pods`),
+    tile('Gap to record', isNaN(r.gap) ? '—' : '+' + r.gap.toFixed(2) + 's', delta(r.gap, b.gap, 2, true, 's'), '', 'mono'),
+    tile('New PBs', r.pbs, r.eligible ? `${pct(r.pbs, r.eligible)}% of repeat runs` : 'no repeat runs yet'),
+  ].join('');
+
+  const rolling = recent.map((_, i) => { const sl = recent.slice(Math.max(0, i - 4), i + 1); return mean(sl, x => x.place); });
+  mkChart('ch-form', {
+    data: {
+      labels: recent.map(x => 'R' + x.race),
+      datasets: [
+        { type: 'bar', label: 'Finish', data: recent.map(x => [FIELD + 0.5, x.place]), backgroundColor: recent.map(x => placeColor(x.place)), borderRadius: 2, order: 2 },
+        { type: 'line', label: 'Rolling avg (5)', data: rolling, borderColor: C.sun, backgroundColor: 'transparent', borderWidth: 2.5, pointRadius: 2, pointBackgroundColor: C.sun, tension: 0.3, order: 1 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { tooltip: { callbacks: {
+        title: c => { const x = recent[c[0].dataIndex]; return `Race ${x.race} · ${x.date}`; },
+        label: c => { const x = recent[c.dataIndex]; return c.datasetIndex === 1 ? `Rolling avg: ${c.parsed.y.toFixed(2)}` : [`${shortCourse(x.course)}`, `${x.racer}`, `${ord(x.place)} · ${fmtTime(x.time)}${x.isPB ? ' · PB' : ''}`]; },
+      } } },
+      scales: {
+        y: { reverse: true, min: 0.5, max: FIELD + 0.5, afterBuildTicks: ax => { ax.ticks = Array.from({ length: FIELD }, (_, i) => ({ value: i + 1 })); }, ticks: { callback: v => v }, title: { display: !IS_MOBILE(), text: 'Finish' } },
+        x: { grid: { display: false } },
+      },
+    },
+  });
+}
+
+// ---------- improvement ----------
+let impMode = 'time', impRs = [];
+const IMP_MODES = [['time', 'Lap times'], ['finish', 'Finish'], ['rate', 'Podium & win rate']];
+function renderImprovement(rs) {
+  impRs = rs;
+  const seg = document.getElementById('imp-mode');
+  seg.innerHTML = IMP_MODES.map(([k, l]) => chipBtn(`data-v="${k}"`, l, null, impMode === k)).join('');
+  seg.querySelectorAll('.chip').forEach(b => b.onclick = () => { impMode = b.dataset.v; renderImprovement(impRs); });
+  const hl = document.getElementById('imp-hl'), note = document.getElementById('imp-note');
+  const kv = (k, v, cls = '') => `<div><div class="k">${k}</div><div class="v ${cls}">${v}</div></div>`;
+  if (rs.length < 2) {
+    hl.innerHTML = ''; note.textContent = 'Need at least 2 races in this filter to show a trend.';
+    if (charts['ch-imp']) { charts['ch-imp'].destroy(); delete charts['ch-imp']; }
+    return;
+  }
+
+  if (impMode === 'time') {
+    // Seconds vs your first run on each course, by attempt number. Below zero = faster.
+    const byC = {}; rs.forEach(r => { if (r.time != null) (byC[r.course] = byC[r.course] || []).push(r); });
+    const courses = Object.entries(byC).filter(([, a]) => a.length >= 2);
+    if (!courses.length) {
+      hl.innerHTML = ''; note.textContent = 'Race the same course at least twice in this filter to see lap-time progress.';
+      if (charts['ch-imp']) { charts['ch-imp'].destroy(); delete charts['ch-imp']; }
+      return;
+    }
+    const sets = courses.map(([c, a]) => ({ c, a, pts: a.map((r, i) => ({ x: i + 1, y: r.time - a[0].time, r })) }));
+    const maxK = Math.max(...sets.map(x => x.pts.length));
+    const avgLine = Array.from({ length: maxK }, (_, i) => { const v = sets.filter(x => x.pts[i]).map(x => x.pts[i].y); return { x: i + 1, y: v.reduce((p, q) => p + q, 0) / v.length, n: v.length }; });
+    const latest = mean(sets, x => x.pts[x.pts.length - 1].y);
+    const bestGain = mean(sets, x => Math.min(...x.pts.map(p => p.y)));
+    const faster = sets.filter(x => x.pts[x.pts.length - 1].y < 0).length;
+    const sgn = v => (v <= 0 ? '−' : '+') + Math.abs(v).toFixed(2) + 's';
+    hl.innerHTML = kv('Latest vs first run', sgn(latest), latest < 0 ? 'd-up' : 'd-down') + kv('Best vs first run', sgn(bestGain), bestGain < 0 ? 'd-up' : 'd-down') + kv('Courses getting faster', `${faster} of ${sets.length}`);
+    note.textContent = 'Each line is one course this racer has run: how many seconds faster (below 0) or slower than your first run there, attempt by attempt. Thick sand line is the average across courses.';
+    mkChart('ch-imp', {
+      type: 'line',
+      data: { datasets: sets.map(x => ({
+        label: shortCourse(x.c), data: x.pts, borderColor: trackColor(x.a[0].base), backgroundColor: x.a[0].reverse ? 'transparent' : trackColor(x.a[0].base),
+        borderDash: x.a[0].reverse ? [5, 4] : [], borderWidth: 1.5, pointRadius: 4, pointBorderWidth: 1.5, cubicInterpolationMode: 'monotone',
+      })).concat([{ label: 'Average', data: avgLine, borderColor: C.sand, backgroundColor: C.sand, borderWidth: 3.5, pointRadius: 3, cubicInterpolationMode: 'monotone' }]) },
+      options: {
+        responsive: true, maintainAspectRatio: false, parsing: false,
+        plugins: { tooltip: { callbacks: {
+          title: c => `Attempt ${c[0].parsed.x}`,
+          label: c => { const p = c.raw; if (!p.r) return `Average: ${sgn(p.y)} (${p.n} course${p.n === 1 ? '' : 's'})`; return `${c.dataset.label}: ${fmtTime(p.r.time)} (${p.x === 1 ? 'first run' : sgn(p.y)}) · race ${p.r.race}, ${ord(p.r.place)}`; },
+        } } },
+        scales: {
+          x: { type: 'linear', min: 1, max: maxK, ticks: { stepSize: 1, precision: 0 }, title: { display: true, text: 'Attempt on that course' } },
+          y: { title: { display: true, text: 'Seconds vs first run' }, ticks: { callback: v => (v > 0 ? '+' : '') + v + 's' },
+               grid: { color: c => c.tick.value === 0 ? 'rgba(236,210,170,0.45)' : C.line } },
+        },
+      },
+    });
+    return;
+  }
+
+  const labels = rs.map(r => r.race);
+  if (impMode === 'finish') {
+    const roll = rs.map((_, i) => mean(rs.slice(Math.max(0, i - 4), i + 1), x => x.place));
+    const cum = rs.map((_, i) => mean(rs.slice(0, i + 1), x => x.place));
+    const h = Math.floor(rs.length / 2), a = mean(rs.slice(0, h), x => x.place), b = mean(rs.slice(h), x => x.place);
+    hl.innerHTML = kv('First half avg', a.toFixed(2)) + kv('Second half avg', b.toFixed(2), b < a ? 'd-up' : b > a ? 'd-down' : '') + kv('Change', `${b <= a ? '▲' : '▼'} ${Math.abs(a - b).toFixed(2)} places`, b < a ? 'd-up' : b > a ? 'd-down' : '');
+    note.textContent = 'Gold line is your 5-race rolling average finish. Dashed line is your running average since race 1, which moves slowly and shows the long-term direction. Higher on the chart is better.';
+    mkChart('ch-imp', {
+      type: 'line',
+      data: { labels, datasets: [
+        { label: 'Finish', data: rs.map(r => r.place), showLine: false, pointRadius: 3, pointBackgroundColor: rs.map(r => placeColor(r.place)), pointBorderWidth: 0, borderColor: 'transparent' },
+        { label: 'Rolling avg (5)', data: roll, borderColor: C.sun, backgroundColor: 'rgba(255,138,42,0.12)', fill: { target: { value: FIELD + 0.5 } }, borderWidth: 2.5, pointRadius: 0, cubicInterpolationMode: 'monotone' },
+        { label: 'Running avg', data: cum, borderColor: C.sand, borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, cubicInterpolationMode: 'monotone' },
+      ] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { tooltip: { callbacks: { title: c => `Race ${c[0].label}`, label: c => c.datasetIndex === 0 ? `${ord(c.parsed.y)} · ${shortCourse(rs[c.dataIndex].course)}` : `${c.dataset.label}: ${c.parsed.y.toFixed(2)}` } } },
+        scales: { y: { reverse: true, min: 0.5, max: FIELD + 0.5, afterBuildTicks: ax => { ax.ticks = Array.from({ length: FIELD }, (_, i) => ({ value: i + 1 })); }, title: { display: !IS_MOBILE(), text: 'Finish' } },
+                  x: { title: { display: true, text: 'Race #' }, ticks: { autoSkip: true, maxTicksLimit: 14 } } },
+      },
+    });
+    return;
+  }
+
+  // rate
+  const W = 10;
+  const win = (fn) => rs.map((_, i) => { const sl = rs.slice(Math.max(0, i - W + 1), i + 1); return sl.filter(fn).length / sl.length * 100; });
+  const pod = win(r => r.place <= 3), wins = win(r => r.place === 1);
+  const cumPod = rs.map((_, i) => rs.slice(0, i + 1).filter(r => r.place <= 3).length / (i + 1) * 100);
+  const first = rs.slice(0, Math.min(W, rs.length)), last = rs.slice(-Math.min(W, rs.length));
+  const fp = pct(first.filter(r => r.place <= 3).length, first.length), lp = pct(last.filter(r => r.place <= 3).length, last.length);
+  const fw = pct(first.filter(r => r.place === 1).length, first.length), lw = pct(last.filter(r => r.place === 1).length, last.length);
+  hl.innerHTML = kv(`Podium rate, first ${first.length} → last ${last.length}`, `${fp}% → ${lp}%`, lp > fp ? 'd-up' : lp < fp ? 'd-down' : '') + kv('Win rate', `${fw}% → ${lw}%`, lw > fw ? 'd-up' : lw < fw ? 'd-down' : '');
+  note.textContent = `Solid lines are your podium and win rates over the most recent ${W} races at each point. Dashed line is your all-time podium rate up to that race.`;
+  mkChart('ch-imp', {
+    type: 'line',
+    data: { labels, datasets: [
+      { label: `Podium rate (last ${W})`, data: pod, borderColor: C.sun2, backgroundColor: 'rgba(255,210,122,0.12)', fill: 'origin', borderWidth: 2.5, pointRadius: 0, cubicInterpolationMode: 'monotone' },
+      { label: `Win rate (last ${W})`, data: wins, borderColor: C.sun, backgroundColor: 'transparent', borderWidth: 2.5, pointRadius: 0, cubicInterpolationMode: 'monotone' },
+      { label: 'Podium rate (all-time)', data: cumPod, borderColor: C.sand, borderDash: [5, 4], borderWidth: 1.5, pointRadius: 0, cubicInterpolationMode: 'monotone' },
+    ] },
+    options: {
+      responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      plugins: { tooltip: { callbacks: { title: c => `Race ${c[0].label}`, label: c => `${c.dataset.label}: ${Math.round(c.parsed.y)}%` } } },
+      scales: { y: { min: 0, max: 100, ticks: { callback: v => v + '%' } }, x: { title: { display: true, text: 'Race #' }, ticks: { autoSkip: true, maxTicksLimit: 14 } } },
+    },
+  });
+}
+
+function renderHistoricals(rs) {
+  // Gap to record, one dataset per base track
+  const bases = [...new Set(rs.map(r => r.base))];
+  const labels = rs.map(r => r.race);
+  mkChart('ch-gap', {
+    type: 'line',
+    data: {
+      labels,
+      datasets: bases.map(b => ({
+        label: b,
+        data: rs.map(r => r.base === b && r.gap != null ? r.gap : null),
+        showLine: false, borderColor: trackColor(b), backgroundColor: rs.map(r => r.reverse ? 'transparent' : trackColor(b)),
+        pointRadius: 5, pointHoverRadius: 7, pointBorderWidth: 2,
+        pointStyle: rs.map(r => r.isPB ? 'rectRot' : 'circle'),
+      })).concat([{
+        label: 'Rolling avg (5)', data: rs.map((_, i) => { const sl = rs.slice(Math.max(0, i - 4), i + 1).filter(x => x.gap != null); return sl.length ? mean(sl, x => x.gap) : null; }),
+        borderColor: C.sand, backgroundColor: 'transparent', borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, tension: 0.3, spanGaps: true,
+      }]),
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { tooltip: { callbacks: {
+        title: c => `Race ${c[0].label}`,
+        label: c => { if (c.dataset.label.startsWith('Rolling')) return `Rolling avg: +${c.parsed.y.toFixed(2)}s`; const r = rs[c.dataIndex]; return [`${shortCourse(r.course)} · ${r.racer}`, `${fmtTime(r.time)} · +${r.gap.toFixed(2)}s off record`, `${ord(r.place)}${r.isPB ? ' · new PB' : ''}`]; },
+      } } },
+      scales: { y: { beginAtZero: true, title: { display: true, text: 'Seconds off record' } }, x: { title: { display: true, text: 'Race #' }, ticks: { autoSkip: true, maxTicksLimit: 14 } } },
+    },
+  });
+
+  // Distribution
+  const dist = Array.from({ length: FIELD }, (_, i) => rs.filter(r => r.place === i + 1).length);
+  mkChart('ch-dist', {
+    type: 'bar',
+    data: { labels: dist.map((_, i) => ord(i + 1)), datasets: [{ data: dist, backgroundColor: dist.map((_, i) => placeColor(i + 1)), borderRadius: 2 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y} race${c.parsed.y === 1 ? '' : 's'} (${pct(c.parsed.y, rs.length)}%)` } } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } }, x: { grid: { display: false } } } },
+  });
+
+  // Sessions
+  const dates = [...new Set(rs.map(r => r.date))];
+  const sess = dates.map(d => stats(rs.filter(r => r.date === d)));
+  mkChart('ch-session', {
+    data: {
+      labels: dates,
+      datasets: [
+        { type: 'bar', label: 'Podium %', data: sess.map(s => pct(s.pod, s.n)), backgroundColor: 'rgba(255,210,122,0.35)', borderColor: C.sun2, borderWidth: 1, yAxisID: 'yP', order: 2 },
+        { type: 'line', label: 'Avg finish', data: sess.map(s => s.avg), borderColor: C.sun, backgroundColor: C.sun, pointRadius: 5, borderWidth: 2.5, yAxisID: 'yF', order: 1 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { tooltip: { callbacks: { afterTitle: c => `${sess[c[0].dataIndex].n} races · ${sess[c[0].dataIndex].wins} wins`, label: c => c.datasetIndex === 0 ? `Podium: ${c.parsed.y}%` : `Avg finish: ${c.parsed.y.toFixed(2)}` } } },
+      scales: {
+        yF: { position: 'left', reverse: true, min: 1, max: FIELD, ticks: { stepSize: 1, callback: v => v }, title: { display: !IS_MOBILE(), text: 'Avg finish' } },
+        yP: { position: 'right', min: 0, max: 100, grid: { display: false }, ticks: { callback: v => v + '%' } },
+        x: { grid: { display: false } },
+      },
+    },
+  });
+
+  // Racer cards
+  const byR = {}; rs.forEach(r => (byR[r.racer] = byR[r.racer] || []).push(r));
+  document.getElementById('racers').innerHTML = Object.entries(byR).sort((a, b) => b[1].length - a[1].length).map(([k, a]) => {
+    const s = stats(a);
+    const recs = Object.values(RECORD).filter(r => r.racer === k).length;
+    return `<div class="rc"><p class="nm">${esc(k)}</p>
+      <div class="row"><span class="k">Races</span><span class="val">${s.n}</span></div>
+      <div class="row"><span class="k">Avg finish</span><span class="val">${s.avg.toFixed(2)}</span></div>
+      <div class="row"><span class="k">Wins / Podiums</span><span class="val">${s.wins} / ${s.pod}</span></div>
+      <div class="row"><span class="k">Best finish</span><span class="val">${ord(s.best)}</span></div>
+      <div class="row"><span class="k">Gap to record</span><span class="val">${isNaN(s.gap) ? '—' : '+' + s.gap.toFixed(2) + 's'}</span></div>
+      <div class="row"><span class="k">Records held</span><span class="val">${recs}</span></div>
+    </div>`;
+  }).join('') || '<div class="empty">No races match this filter.</div>';
+}
+
+function logRow(r, withDate = true) {
+  const tags = (r.isPB ? ' <span class="tag pb">PB</span>' : '') + (r.firstRun ? ' <span class="tag first">1st run</span>' : '') +
+    (r.fixed ? ` <span class="tag fix" title="Entered as ${esc(r.timeRaw)}, read as ${fmtTime(r.time)}">fixed</span>` : '') +
+    (RECORD[r.course] === r ? ' <span class="tag pb" style="color:var(--gold);border-color:var(--gold)">Record</span>' : '');
+  return `<tr><td class="mono">${r.race}</td>${withDate ? `<td class="mono">${esc(r.date)}</td>` : ''}<td>${nameCourse(r.course)}</td><td>${esc(r.racer)}</td>
+    <td>${pill(r.place)}</td><td class="mono num">${fmtTime(r.time)}</td><td class="mono num">${r.gap == null ? '—' : r.gap === 0 ? '0.00' : '+' + r.gap.toFixed(2)}</td><td>${tags}</td></tr>`;
+}
+const LOG_HEAD = `<thead><tr><th class="mono">#</th><th>Date</th><th>Course</th><th>Racer</th><th>Finish</th><th class="num">Time</th><th class="num">Off record</th><th></th></tr></thead>`;
+function renderLog(rs) {
+  document.getElementById('log-sub').textContent = `${rs.length} races · ${describeOv()} · most recent first.`;
+  document.getElementById('log').innerHTML = rs.length ? LOG_HEAD + '<tbody>' + [...rs].reverse().map(r => logRow(r)).join('') + '</tbody>' : '<tbody><tr><td class="empty">No races match this filter.</td></tr></tbody>';
+}
+
+// ============================================================================
+// RACER ANALYSIS
+// ============================================================================
+const rz = { racer: null, dir: 'all' };
+const rzDir = r => rz.dir === 'all' || (rz.dir === 'rev' ? r.reverse : !r.reverse);
+let currentTab = 'ov';
+
+function groupStats(rs, key) {
+  const g = {}; rs.forEach(r => (g[key(r)] = g[key(r)] || []).push(r));
+  return Object.entries(g).map(([k, a]) => ({ k, a, ...stats(a) }));
+}
+function cellBg(avg, n) {
+  if (!n) return 'transparent';
+  const t = Math.max(0, Math.min(1, (avg - 1) / (FIELD - 1))); // 0 good → 1 bad
+  const a = (0.12 + Math.abs(t - 0.45) * 0.6) * (n < 2 ? 0.6 : 1);
+  return t < 0.45 ? `rgba(255,210,122,${a.toFixed(2)})` : `rgba(226,101,90,${a.toFixed(2)})`;
+}
+const rankOf = (list, k, better) => { const s = [...list].sort(better); return s.findIndex(x => x.k === k) + 1; };
+
+function renderRacerFilters() {
+  if (!rz.racer || !RACERS.includes(rz.racer)) rz.racer = RACERS[0];
+  const rC = {}; RACES.filter(rzDir).forEach(r => rC[r.racer] = (rC[r.racer] || 0) + 1);
+  const el = document.getElementById('r-racer');
+  el.innerHTML = RACERS.map(r => chipBtn(`data-v="${esc(r)}"`, esc(r), rC[r] || 0, rz.racer === r)).join('');
+  el.querySelectorAll('.chip').forEach(b => b.onclick = () => { rz.racer = b.dataset.v; renderAnalysis(); });
+  const mine = RACES.filter(r => r.racer === rz.racer);
+  const nF = mine.filter(r => !r.reverse).length, nR = mine.length - nF;
+  const d = document.getElementById('r-dir');
+  d.innerHTML = [['all', 'Both', mine.length], ['fwd', 'Forward', nF], ['rev', 'Reverse', nR]].map(([k, l, n]) => chipBtn(`data-v="${k}"`, l, n, rz.dir === k, k === 'rev' ? 'rev' : '')).join('');
+  d.querySelectorAll('.chip').forEach(b => b.onclick = () => { rz.dir = b.dataset.v; renderAnalysis(); });
+}
+
+function renderAnalysis() {
+  if (!RACES.length || currentTab !== 'az') return;
+  renderRacerFilters();
+  const who = rz.racer;
+  const pool = RACES.filter(rzDir);
+  const mine = pool.filter(r => r.racer === who);
+  const s = stats(mine), all = stats(pool);
+  const others = stats(pool.filter(r => r.racer !== who));
+  const racers = groupStats(pool, r => r.racer);
+  const dirTxt = rz.dir === 'all' ? '' : rz.dir === 'rev' ? ' · reverse layouts only' : ' · forward layouts only';
+
+  document.getElementById('r-name').textContent = who;
+  if (!s.n) {
+    document.getElementById('r-sub').textContent = `No races with ${who}${dirTxt}.`;
+    ['r-tiles', 'r-best', 'r-insights', 'r-courses', 'r-fr', 'r-rank', 'r-log', 'r-last'].forEach(id => document.getElementById(id).innerHTML = '');
+    renderImprovement([]);
+    ['ch-r-dist', 'ch-r-trend'].forEach(id => { if (charts[id]) { charts[id].destroy(); delete charts[id]; } });
+    return;
+  }
+  const first = mine[0], last = mine[mine.length - 1];
+  document.getElementById('r-sub').textContent = `${s.n} race${s.n === 1 ? '' : 's'} · first flown race ${first.race} (${first.date}) · last flown race ${last.race} (${last.date})${dirTxt}`;
+  document.getElementById('r-last').innerHTML = `<div class="label">Last ${Math.min(10, s.n)} finishes</div><div class="runs">${mine.slice(-10).map(r => pill(r.place)).join('')}</div>`;
+
+  // ---- tiles ----
+  const rank = (better) => racers.length > 1 ? ` · #${rankOf(racers, who, better)} of ${racers.length}` : '';
+  const bestN = mine.filter(r => r.place === s.best).length;
+  const worst = Math.max(...mine.map(r => r.place)), worstN = mine.filter(r => r.place === worst).length;
+  const firstWin = mine.find(r => r.place === 1);
+  const recs = Object.values(RECORD).filter(r => r.racer === who);
+  const timed = mine.filter(r => r.time != null);
+  const fastest = timed.length ? timed.reduce((m, r) => r.time < m.time ? r : m) : null;
+  const coursesRun = new Set(mine.map(r => r.course));
+  const unraced = COURSES.filter(c => !coursesRun.has(c) && rzDir(RACES.find(r => r.course === c)));
+  const last5 = mine.slice(-5), l5 = stats(last5);
+  let streak = 0, bestStreak = 0; mine.forEach(r => { streak = r.place <= 3 ? streak + 1 : 0; bestStreak = Math.max(bestStreak, streak); });
+  document.getElementById('r-tiles').innerHTML = [
+    tile('Win rate', pct(s.wins, s.n) + '%', `${s.wins} win${s.wins === 1 ? '' : 's'} in ${s.n} races${rank((a, b) => b.wins / b.n - a.wins / a.n || a.avg - b.avg)}`, s.wins ? 'hero' : ''),
+    tile('Podium rate', pct(s.pod, s.n) + '%', `${s.pod} top-three finishes${rank((a, b) => b.pod / b.n - a.pod / a.n)}`),
+    tile('Total races', s.n, `${pct(s.n, all.n)}% of all races${rank((a, b) => b.n - a.n)}`),
+    tile('Average finish', s.avg.toFixed(2), (others.n ? delta(s.avg, others.avg, 2, true).replace('vs avg', 'vs other pods') : `median ${ord(s.med)}`) + rank((a, b) => a.avg - b.avg)),
+  ].join('');
+
+  // ---- improvement ----
+  document.getElementById('imp-title').textContent = `Improvement over time · ${who}`;
+  renderImprovement(mine);
+
+  // ---- best run per course ----
+  document.getElementById('r-best-title').textContent = `Best runs · ${who}`;
+  const courseOrder = [...COURSES].filter(c => rzDir(RACES.find(r => r.course === c))).sort((a, b) => {
+    const A = RACES.find(r => r.course === a), B = RACES.find(r => r.course === b);
+    return A.base.localeCompare(B.base) || A.reverse - B.reverse;
+  });
+  document.getElementById('r-best').innerHTML = courseOrder.map(c => {
+    const any = RACES.find(r => r.course === c);
+    const runs = mine.filter(r => r.course === c), t = runs.filter(r => r.time != null);
+    const head = `<div class="course">${esc(any.base)}${any.reverse ? '<span class="rv">Reverse</span>' : ''}</div>`;
+    if (!t.length) return `<div class="rec" style="--c:${trackColor(any.base)};opacity:.5">${head}<div class="time">—</div><div class="avg">Not raced with ${esc(who)} yet</div></div>`;
+    const best = t.reduce((m, r) => r.time < m.time ? r : m);
+    const rec = RECORD[c], isRec = rec === best;
+    const off = rec ? best.time - rec.time : NaN;
+    return `<div class="rec" style="--c:${trackColor(any.base)}">${head}
+      <div class="time">${fmtTime(best.time)}${isRec ? ' <span class="tag pb" style="color:var(--gold);border-color:var(--gold)">Record</span>' : ''}</div>
+      <div class="avg">Average <b>${fmtTime(mean(t, r => r.time))}</b> · ${t.length} run${t.length === 1 ? '' : 's'}</div>
+      <div class="who">Best set race ${best.race} · ${ord(best.place)}${!isRec && !isNaN(off) ? ` · +${off.toFixed(2)}s off record` : ''}</div>
+      <div class="runs">${runs.slice(-5).map(r => pill(r.place)).join('')}</div>
+    </div>`;
+  }).join('');
+
+  // ---- courses for this racer ----
+  const cs = groupStats(mine, r => r.course).map(x => {
+    const t = x.a.filter(r => r.time != null);
+    const bt = t.length ? Math.min(...t.map(r => r.time)) : NaN;
+    return { ...x, bestTime: bt, avgTime: t.length ? mean(t, r => r.time) : NaN, offRec: RECORD[x.k] && !isNaN(bt) ? bt - RECORD[x.k].time : NaN };
+  }).sort((a, b) => a.avg - b.avg || b.n - a.n);
+  document.getElementById('r-course-title').textContent = `By course · ${who}`;
+  document.getElementById('r-courses').innerHTML = `<thead><tr><th>Course</th><th class="num">Races</th><th class="num">Avg finish</th><th class="num">Best</th><th class="num">Wins</th><th class="num">Podium %</th><th class="num">Best time</th><th class="num">Avg time</th><th class="num">Off record</th><th>Last 5</th></tr></thead>
+    <tbody>${cs.map(x => `<tr>
+      <td>${nameCourse(x.k)}</td><td class="mono num">${x.n}</td>
+      <td class="mono num" style="background:${cellBg(x.avg, x.n)}">${x.avg.toFixed(2)}</td>
+      <td class="mono num">${ord(x.best)}</td><td class="mono num">${x.wins}</td><td class="mono num">${pct(x.pod, x.n)}%</td>
+      <td class="mono num">${fmtTime(x.bestTime)}</td><td class="mono num">${fmtTime(x.avgTime)}</td>
+      <td class="mono num">${isNaN(x.offRec) ? '—' : x.offRec < 0.005 ? '<span class="tag pb" style="color:var(--gold);border-color:var(--gold)">Record</span>' : '+' + x.offRec.toFixed(2) + 's'}</td>
+      <td>${x.a.slice(-5).map(r => pill(r.place)).join('')}</td>
+    </tr>`).join('')}${unraced.map(c => `<tr style="opacity:.5"><td>${nameCourse(c)}</td><td class="mono num">0</td><td colspan="8" style="color:var(--dust)">Not raced with ${esc(who)} yet</td></tr>`).join('')}</tbody>`;
+
+  // ---- insights ----
+  const out = [];
+  const q = cs.filter(x => x.n >= 2);
+  if (q.length >= 2) {
+    out.push(`Best course for ${esc(who)}: <strong>${esc(shortCourse(q[0].k))}</strong>, ${q[0].avg.toFixed(1)} avg finish over ${q[0].n} races.`);
+    const w = q[q.length - 1];
+    out.push(`Toughest course: <strong>${esc(shortCourse(w.k))}</strong>, ${w.avg.toFixed(1)} avg finish over ${w.n} races.`);
+  }
+  if (others.n) {
+    const d = others.avg - s.avg;
+    out.push(Math.abs(d) < 0.25
+      ? `Finishes about the same as your other pods (${s.avg.toFixed(2)} vs ${others.avg.toFixed(2)}).`
+      : `Finishes <strong>${Math.abs(d).toFixed(1)} places ${d > 0 ? 'better' : 'worse'}</strong> than your other pods combined (${s.avg.toFixed(2)} vs ${others.avg.toFixed(2)}).`);
+    // same-course comparison: only courses both this racer and others have run
+    const shared = cs.map(x => ({ x, o: stats(pool.filter(r => r.course === x.k && r.racer !== who)) })).filter(p => p.o.n);
+    const better = shared.filter(p => p.x.avg < p.o.avg).map(p => esc(shortCourse(p.x.k)));
+    if (shared.length >= 2) out.push(`Beats your other pods on <strong>${better.length} of ${shared.length}</strong> shared courses${better.length && better.length < shared.length ? ` (${better.join(', ')})` : ''}.`);
+  }
+  if (s.n >= 6) {
+    const h = Math.floor(s.n / 2), a = stats(mine.slice(0, h)), b = stats(mine.slice(h));
+    const d = a.avg - b.avg;
+    if (Math.abs(d) >= 0.5) out.push(`${d > 0 ? 'Improving' : 'Slipping'}: first ${h} races averaged ${a.avg.toFixed(1)}, the last ${s.n - h} averaged <strong>${b.avg.toFixed(1)}</strong>.`);
+    else out.push(`Steady over time: ${a.avg.toFixed(1)} avg in the first ${h} races, ${b.avg.toFixed(1)} in the last ${s.n - h}.`);
+  }
+  if (recs.length) out.push(`Holds the course record on <strong>${recs.map(r => `${esc(shortCourse(r.course))} (${fmtTime(r.time)})`).join(', ')}</strong>.`);
+  if (s.n < 3) out.push(`Only ${s.n} race${s.n === 1 ? '' : 's'} so far. Treat these numbers as a first look.`);
+  document.getElementById('r-insights').innerHTML = out.map(x => `<li>${x}</li>`).join('') || '<li>Not enough races yet.</li>';
+
+  // ---- charts ----
+  const dist = Array.from({ length: FIELD }, (_, i) => mine.filter(r => r.place === i + 1).length);
+  mkChart('ch-r-dist', {
+    type: 'bar',
+    data: { labels: dist.map((_, i) => ord(i + 1)), datasets: [{ data: dist, backgroundColor: dist.map((_, i) => placeColor(i + 1)), borderRadius: 2 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => `${c.parsed.y} race${c.parsed.y === 1 ? '' : 's'} (${pct(c.parsed.y, s.n)}%)` } } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } }, x: { grid: { display: false } } } },
+  });
+  const rolling = mine.map((_, i) => mean(mine.slice(Math.max(0, i - 2), i + 1), x => x.place));
+  mkChart('ch-r-trend', {
+    type: 'line',
+    data: { labels: mine.map(r => r.race), datasets: [
+      { label: 'Finish', data: mine.map(r => r.place), showLine: false, pointRadius: 6, pointHoverRadius: 8, pointBorderWidth: 2,
+        pointBorderColor: mine.map(r => trackColor(r.base)), pointBackgroundColor: mine.map(r => r.reverse ? 'transparent' : trackColor(r.base)), borderColor: C.sand },
+      { label: 'Rolling avg (3)', data: rolling, borderColor: C.sun, backgroundColor: 'transparent', borderWidth: 2, pointRadius: 0, tension: 0.3 },
+    ] },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { title: c => `Race ${c[0].label}`, label: c => { if (c.datasetIndex === 1) return `Rolling avg: ${c.parsed.y.toFixed(2)}`; const r = mine[c.dataIndex]; return [shortCourse(r.course), `${ord(r.place)} · ${fmtTime(r.time)}`]; } } } },
+      scales: { y: { reverse: true, min: 0.5, max: FIELD + 0.5, afterBuildTicks: ax => { ax.ticks = Array.from({ length: FIELD }, (_, i) => ({ value: i + 1 })); } }, x: { title: { display: true, text: 'Race #' }, ticks: { autoSkip: true, maxTicksLimit: 12 } } } },
+  });
+
+  // ---- forward vs reverse ----
+  const mineAll = RACES.filter(r => r.racer === who);
+  const f = stats(mineAll.filter(r => !r.reverse)), v = stats(mineAll.filter(r => r.reverse));
+  document.getElementById('r-fr-sub').textContent = `${who} on normal layouts vs reversed ones. The better value in each row is highlighted. The Layout filter does not apply here.`;
+  const defs = [
+    ['Races', x => x.n, x => x.n, null],
+    ['Avg finish', x => x.avg, x => x.avg.toFixed(2), false],
+    ['Wins', x => x.wins, x => x.wins, true],
+    ['Podium rate', x => x.pod / x.n, x => pct(x.pod, x.n) + '%', true],
+    ['Best finish', x => x.best, x => ord(x.best), false],
+  ];
+  const cell = (x, o, [, get, fmt, hib]) => { if (!x.n) return '<td>—</td>'; let better = false; if (hib !== null && o.n) { const a = get(x), b = get(o); better = hib ? a > b + 1e-9 : a < b - 1e-9; } return `<td class="mono ${better ? 'better' : ''}">${fmt(x)}</td>`; };
+  document.getElementById('r-fr').innerHTML = `<thead><tr><th></th><th>Forward</th><th style="color:var(--cool)">Reverse</th></tr></thead><tbody>${defs.map(d => `<tr><td>${d[0]}</td>${cell(f, v, d)}${cell(v, f, d)}</tr>`).join('')}</tbody>`;
+  let verdict = 'Race this pod on both layout types to compare.';
+  if (f.n && v.n) {
+    const d = v.avg - f.avg;
+    verdict = Math.abs(d) < 0.3 ? 'Layout direction makes little difference.' : `Finishes <strong>${Math.abs(d).toFixed(1)} places better ${d > 0 ? 'going forward' : 'in reverse'}</strong>.`;
+    if (Math.min(f.n, v.n) < 3) verdict += ' <span style="color:var(--dust)">Fewer than 3 races on one side, so it is an early read.</span>';
+  }
+  document.getElementById('r-fr-verdict').innerHTML = verdict;
+
+  // ---- standings ----
+  const rows = [...racers].sort((a, b) => a.avg - b.avg || b.n - a.n);
+  document.getElementById('r-rank').innerHTML = `<thead><tr><th>#</th><th>Racer</th><th class="num">Races</th><th class="num">Avg</th><th class="num">W</th><th class="num">Pod %</th><th class="num">Records</th></tr></thead><tbody>${rows.map((r, i) => {
+    const sel = r.k === who, recN = Object.values(RECORD).filter(x => x.racer === r.k && rzDir(x)).length;
+    return `<tr style="cursor:pointer" data-r="${esc(r.k)}"${sel ? ' class="selrow"' : ''}><td class="mono">${i + 1}</td><td>${esc(r.k)}</td><td class="mono num">${r.n}</td><td class="mono num">${r.avg.toFixed(2)}</td><td class="mono num">${r.wins}</td><td class="mono num">${pct(r.pod, r.n)}%</td><td class="mono num">${recN}</td></tr>`;
+  }).join('')}</tbody>`;
+  document.querySelectorAll('#r-rank tbody tr[data-r]').forEach(tr => tr.onclick = () => { rz.racer = tr.dataset.r; renderAnalysis(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+
+  // ---- log ----
+  document.getElementById('r-log-sub').textContent = `${mine.length} races with ${who} · most recent first.`;
+  document.getElementById('r-log').innerHTML = LOG_HEAD + '<tbody>' + [...mine].reverse().map(r => logRow(r)).join('') + '</tbody>';
+}
+
+// ============================================================================
+// WIRING
+// ============================================================================
+function showTab(name) {
+  currentTab = name === 'az' ? 'az' : 'ov';
+  document.getElementById('view-ov').hidden = currentTab !== 'ov';
+  document.getElementById('view-az').hidden = currentTab !== 'az';
+  document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === currentTab));
+  try { localStorage.setItem('podTab', currentTab); } catch (e) {}
+  if (currentTab === 'az') renderAnalysis();
+}
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => showTab(t.dataset.tab));
+document.querySelectorAll('[data-collapse]').forEach(b => b.onclick = () => document.getElementById(b.dataset.collapse).classList.toggle('collapsed'));
+document.getElementById('sync-btn').onclick = () => load(true);
+window.matchMedia('(max-width: 720px)').addEventListener('change', () => renderAll());
+
+(function init() {
+  let start = (location.hash === '#analysis' || location.hash === '#racers') ? 'az' : 'ov';
+  try { if (!location.hash) start = localStorage.getItem('podTab') || 'ov'; } catch (e) {}
+  showTab(start);
+  load(false);
+})();
+</script>
+
+</body>
+</html>
